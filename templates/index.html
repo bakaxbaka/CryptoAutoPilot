@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Vulnerability Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- Header -->
+        <header class="terminal-header">
+            <h1><i class="fas fa-shield-alt"></i> BITCOIN VULNERABILITY SCANNER</h1>
+            <p class="terminal-subtitle">Advanced ECDSA Signature Analysis & Private Key Recovery</p>
+        </header>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row">
+            <!-- Control Panel -->
+            <div class="col-md-6">
+                <div class="terminal-panel">
+                    <h3><i class="fas fa-search"></i> SINGLE BLOCK ANALYSIS</h3>
+                    <form method="POST" action="{{ url_for('analyze_block') }}">
+                        <div class="mb-3">
+                            <label class="form-label">Block Number or Hash:</label>
+                            <input type="text" name="block_input" class="form-control terminal-input" 
+                                   placeholder="Enter block number (e.g., 453242) or hash" required>
+                        </div>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="fas fa-search"></i> ANALYZE BLOCK
+                        </button>
+                        <button type="button" class="btn btn-info" onclick="testManualRecovery()" style="margin-top: 10px;">
+                            <i class="fas fa-key"></i> TEST K-REUSE RECOVERY
+                        </button>
+                    </form>
+                </div>
+
+                <div class="terminal-panel">
+                    <h3><i class="fas fa-robot"></i> AUTOPILOT MODE</h3>
+                    <div id="autopilot-controls">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label class="form-label">Start Block:</label>
+                                <input type="number" id="start-block" class="form-control terminal-input" value="0">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">End Block:</label>
+                                <input type="number" id="end-block" class="form-control terminal-input" value="1000">
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label">Direction:</label>
+                            <select id="direction" class="form-select terminal-input">
+                                <option value="forward">Forward (Start → End)</option>
+                                <option value="backward">Backward (Start ← End)</option>
+                            </select>
+                        </div>
+                        <div class="mt-3">
+                            <button id="start-autopilot" class="btn btn-success me-2">
+                                <i class="fas fa-play"></i> START AUTOPILOT
+                            </button>
+                            <button id="stop-autopilot" class="btn btn-warning me-2" disabled>
+                                <i class="fas fa-stop"></i> STOP AUTOPILOT
+                            </button>
+                            <button id="change-direction" class="btn btn-info" disabled>
+                                <i class="fas fa-exchange-alt"></i> CHANGE DIRECTION
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="autopilot-status" class="mt-4" style="display: none;">
+                        <h4>Status: <span id="autopilot-running">STOPPED</span></h4>
+                        <div class="progress mb-2">
+                            <div id="progress-bar" class="progress-bar bg-danger" style="width: 0%"></div>
+                        </div>
+                        <p>Current Block: <span id="current-block">-</span></p>
+                        <p>Blocks Analyzed: <span id="blocks-analyzed">0</span> / <span id="total-blocks">0</span></p>
+                        <p>Vulnerabilities Found: <span id="vulnerabilities-found">0</span></p>
+                        <p>Private Keys Recovered: <span id="keys-recovered">0</span></p>
+                        <p>Last Update: <span id="last-update">-</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="col-md-6">
+                <div class="terminal-panel">
+                    <h3><i class="fas fa-chart-bar"></i> VULNERABILITY DASHBOARD</h3>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="k_reuse">
+                                <h4><i class="fas fa-exclamation-triangle"></i> K-Reuse</h4>
+                                <span class="vuln-count critical">{{ vuln_stats.get('k_reuse', 0) }}</span>
+                                <p>Critical nonce reuse vulnerabilities</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="low_r_values">
+                                <h4><i class="fas fa-arrow-down"></i> Low R Values</h4>
+                                <span class="vuln-count critical">{{ vuln_stats.get('low_r_values', 0) }}</span>
+                                <p>Weak randomness indicators</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="lsb_bias">
+                                <h4><i class="fas fa-binary"></i> LSB Bias</h4>
+                                <span class="vuln-count medium">{{ vuln_stats.get('lsb_bias', 0) }}</span>
+                                <p>Low bit bias patterns</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="msb_bias">
+                                <h4><i class="fas fa-zero"></i> MSB Bias</h4>
+                                <span class="vuln-count high">{{ vuln_stats.get('msb_bias', 0) }}</span>
+                                <p>Leading zero patterns</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="sequential_k">
+                                <h4><i class="fas fa-sort-numeric-up"></i> Sequential K</h4>
+                                <span class="vuln-count high">{{ vuln_stats.get('sequential_k', 0) }}</span>
+                                <p>Sequential nonce patterns</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="lattice_attack">
+                                <h4><i class="fas fa-network-wired"></i> Lattice Attack</h4>
+                                <span class="vuln-count high">{{ vuln_stats.get('lattice_attack', 0) }}</span>
+                                <p>Lattice attack candidates</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="weak_randomness">
+                                <h4><i class="fas fa-random"></i> Weak Randomness</h4>
+                                <span class="vuln-count medium">{{ vuln_stats.get('weak_randomness', 0) }}</span>
+                                <p>Poor entropy sources</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="vuln-card clickable" data-vuln="signature_malleability">
+                                <h4><i class="fas fa-edit"></i> Signature Malleability</h4>
+                                <span class="vuln-count medium">{{ vuln_stats.get('signature_malleability', 0) }}</span>
+                                <p>High S value vulnerabilities</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="vuln-card special clickable" data-vuln="recovered_private_keys">
+                            <h3><i class="fas fa-key"></i> RECOVERED PRIVATE KEYS</h3>
+                            <span class="vuln-count critical-large">{{ vuln_stats.get('recovered_private_keys', 0) }}</span>
+                            <p>Successfully cracked private keys</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Critical Vulnerabilities -->
+        {% if recent_critical_vulns %}
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="terminal-panel">
+                    <h3><i class="fas fa-exclamation-triangle text-danger"></i> RECENT CRITICAL FINDINGS</h3>
+                    <div class="table-responsive">
+                        <table class="table table-dark terminal-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Transaction ID</th>
+                                    <th>Risk Level</th>
+                                    <th>Found At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for vuln in recent_critical_vulns %}
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-info">{{ vuln.vulnerability_type.replace('_', ' ').title() }}</span>
+                                    </td>
+                                    <td>
+                                        {% if vuln.txid %}
+                                        <code class="clickable-hash explorer-link" onclick="openTransactionExplorer('{{ vuln.txid }}')">
+                                            {{ vuln.txid[:16] }}...
+                                        </code>
+                                        <i class="fas fa-external-link-alt ms-1" style="font-size: 0.7em; color: #00bfff;"></i>
+                                        {% else %}
+                                        <span class="text-muted">N/A</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{{ 'danger' if vuln.risk_level == 'CRITICAL' else 'warning' }}">
+                                            {{ vuln.risk_level }}
+                                        </span>
+                                    </td>
+                                    <td>{{ vuln.created_at.strftime('%m-%d %H:%M') }}</td>
+                                    <td>
+                                        <a href="{{ url_for('view_vulnerability_type', vuln_type=vuln.vulnerability_type) }}" 
+                                           class="btn btn-sm btn-outline-light">
+                                            <i class="fas fa-search"></i> Details
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Recent Analyses -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="terminal-panel">
+                    <h3><i class="fas fa-history"></i> RECENT ANALYSES</h3>
+                    <div class="table-responsive">
+                        <table class="table table-dark terminal-table">
+                            <thead>
+                                <tr>
+                                    <th>Block</th>
+                                    <th>Status</th>
+                                    <th>Vulnerabilities</th>
+                                    <th>Analysis Time</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for analysis in recent_analyses %}
+                                <tr>
+                                    <td>{{ analysis.block_input }}</td>
+                                    <td>
+                                        <span class="badge bg-{{ 'success' if analysis.status == 'completed' else 'warning' }}">
+                                            {{ analysis.status.upper() }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{{ 'danger' if analysis.vulnerability_count > 50 else 'warning' if analysis.vulnerability_count > 0 else 'success' }}">
+                                            {{ analysis.vulnerability_count }}
+                                        </span>
+                                    </td>
+                                    <td>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                    <td>
+                                        <a href="{{ url_for('view_analysis', analysis_key=analysis.analysis_key) }}" 
+                                           class="btn btn-sm btn-outline-light">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                        <a href="{{ url_for('export_analysis', analysis_key=analysis.analysis_key) }}" 
+                                           class="btn btn-sm btn-outline-success">
+                                            <i class="fas fa-download"></i> Export
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script>
+        function testManualRecovery() {
+            alert('Manual K-Reuse Recovery Test Initiated!');
+            // Here you would implement the actual K-reuse recovery logic.
+        }
+
+        function openTransactionExplorer(txid) {
+            // Implement the logic to open the transaction explorer with the given txid
+            // For example, you can use window.open() to open a new tab with a blockchain explorer URL
+            // Replace the following URL with the appropriate blockchain explorer URL
+            window.open(`https://www.blockchain.com/btc/tx/${txid}`, '_blank');
+        }
+    </script>
+</body>
+</html>
