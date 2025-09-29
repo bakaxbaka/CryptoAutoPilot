@@ -7,17 +7,23 @@ Comprehensive ECDSA analysis with interactive dashboard and autopilot mode
 import os
 import logging
 import sys
+import hashlib
+import re
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import requests
 import json
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from flask import Flask, render_template, request, jsonify, flash, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from sqlalchemy.exc import SQLAlchemyError
+import base58
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -29,10 +35,8 @@ from config import Config
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-class Base(DeclarativeBase):
-    pass
-
-db = SQLAlchemy(model_class=Base)
+Base = declarative_base()
+db = SQLAlchemy()
 
 # Create Flask app
 app = Flask(__name__)
