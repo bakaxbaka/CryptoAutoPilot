@@ -21,15 +21,27 @@ from abc import ABC, abstractmethod
 
 # Quantum computing imports
 try:
-    from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, execute, Aer
-    from qiskit.algorithms import Shor, Grover, QPE
+    from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+    from qiskit_aer import Aer
     from qiskit.circuit.library import QFT
-    from qiskit.providers.ibmq import IBMQ
     from qiskit.visualization import plot_histogram
-    from qiskit.utils import QuantumInstance
+    try:
+        from qiskit_algorithms import Shor, Grover, VQE
+        QUANTUM_ALGORITHMS_AVAILABLE = True
+    except ImportError:
+        QUANTUM_ALGORITHMS_AVAILABLE = False
+        logging.warning("Qiskit algorithms not available - using basic quantum circuits")
+    try:
+        from qiskit_ibm_provider import IBMProvider
+        IBM_AVAILABLE = True
+    except ImportError:
+        IBM_AVAILABLE = False
+        logging.warning("IBM Quantum provider not available - using local simulators")
     QISKIT_AVAILABLE = True
 except ImportError:
     QISKIT_AVAILABLE = False
+    QUANTUM_ALGORITHMS_AVAILABLE = False
+    IBM_AVAILABLE = False
     logging.warning("Qiskit not available - using simulated quantum algorithms")
 
 # Machine learning imports

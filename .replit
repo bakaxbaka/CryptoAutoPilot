@@ -4,14 +4,11 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
+packages = ["cairo", "cargo", "catch2", "ffmpeg-full", "fmt", "freetype", "geckodriver", "ghostscript", "glibcLocales", "gmp", "gobject-introspection", "gtk3", "libcxx", "libiconv", "libjpeg_turbo", "libpng", "libxcrypt", "mpi", "muparserx", "nlohmann_json", "openssh", "openssl", "pkg-config", "qhull", "rustc", "spdlog", "tcl", "tk", "which", "xsimd"]
 
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 34389
-externalPort = 3000
 
 [workflows]
 runButton = "Project"

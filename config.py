@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 class Config:
     """Configuration management for the Bitcoin Vulnerability Scanner"""
@@ -49,7 +49,7 @@ class Config:
     LOG_FILE = os.getenv('LOG_FILE', 'bitcoin_scanner.log')
     
     @classmethod
-    def get_explorer_url(cls, explorer: str = None, resource_type: str = 'tx') -> str:
+    def get_explorer_url(cls, explorer: Optional[str] = None, resource_type: str = 'tx') -> str:
         """Get the configured explorer URL for a specific resource type"""
         if explorer is None:
             explorer = cls.DEFAULT_EXPLORER
