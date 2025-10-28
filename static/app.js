@@ -465,7 +465,9 @@ function showRecoveryModal(data, isSuccess) {
     let copyTargetEscaped = '';
     if (isSuccess) {
         const successData = data?.successful_recovery || {};
-        const privateKeyWif = successData.private_key_wif || 'Unavailable';
+        const privateKeyWifRaw = successData.private_key_wif;
+        const hasPrivateKeyWif = typeof privateKeyWifRaw === 'string' && privateKeyWifRaw.trim().length > 0;
+        const privateKeyWif = hasPrivateKeyWif ? privateKeyWifRaw : 'Unavailable';
         const privateKeyHex = successData.private_key_hex || successData.validation_result?.private_key_hex || 'Unavailable';
         const attackMethod = successData.attack_method || 'ECDSA nonce reuse';
         const recoveryPair = successData.recovery_pair?.transactions || successData.transaction_ids || [];
@@ -483,8 +485,8 @@ function showRecoveryModal(data, isSuccess) {
         const addressesHtml = addressEntries.length
             ? addressEntries.map(([type, addr]) => `<div><strong>${type}:</strong> <code>${addr}</code></div>`).join('')
             : '<em>No derived addresses available.</em>';
-        copyTarget = privateKeyWif && typeof privateKeyWif === 'string' ? privateKeyWif : '';
-        copyTargetEscaped = copyTarget.replace(/'/g, "\\'");
+        copyTarget = hasPrivateKeyWif ? privateKeyWifRaw : '';
+        copyTargetEscaped = copyTarget ? copyTarget.replace(/'/g, "\\'") : '';
 
         content = `
             <div class="mb-3">
