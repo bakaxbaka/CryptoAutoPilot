@@ -915,6 +915,183 @@ class BitcoinBlockAnalyzer:
         elif first_byte == 0xff:
             return int.from_bytes(data[pos:pos+8], 'little'), pos + 8
 
+    def _encode_varint(self, value: int) -> bytes:
+        """Encode an integer using Bitcoin's variable-length format"""
+        if value < 0xfd:
+            return value.to_bytes(1, 'little')
+        if value <= 0xffff:
+            return b"\xfd" + value.to_bytes(2, 'little')
+        if value <= 0xffffffff:
+            return b"\xfe" + value.to_bytes(4, 'little')
+        return b"\xff" + value.to_bytes(8, 'little')
+
+    def _double_sha256(self, data: bytes) -> bytes:
+        """Return a Bitcoin-style double SHA-256 hash"""
+        return hashlib.sha256(hashlib.sha256(data).digest()).digest()
+
+    def _decode_raw_transaction(self, raw_tx_hex: str) -> Dict[str, Any]:
+        """Decode a raw transaction into its constituent fields"""
+        tx_bytes = bytes.fromhex(raw_tx_hex)
+        pos = 0
+
+        version = int.from_bytes(tx_bytes[pos:pos+4], 'little')
+        pos += 4
+
+        is_segwit = False
+        if pos < len(tx_bytes) - 1 and tx_bytes[pos] == 0 and tx_bytes[pos + 1] != 0:
+            is_segwit = True
+            pos += 2  # Skip marker and flag
+
+        input_count, pos = self._read_varint(tx_bytes, pos)
+
+        inputs = []
+        for _ in range(input_count):
+            prev_hash = tx_bytes[pos:pos+32]
+            pos += 32
+            prev_index = int.from_bytes(tx_bytes[pos:pos+4], 'little')
+            pos += 4
+
+            script_length, pos = self._read_varint(tx_bytes, pos)
+            script_sig = tx_bytes[pos:pos+script_length]
+            pos += script_length
+
+            sequence = int.from_bytes(tx_bytes[pos:pos+4], 'little')
+            pos += 4
+
+            inputs.append({
+                'prev_hash': prev_hash,
+                'prev_index': prev_index,
+                'script_sig': script_sig,
+                'sequence': sequence,
+                'witness': []
+            })
+
+        output_count, pos = self._read_varint(tx_bytes, pos)
+
+        outputs = []
+        for _ in range(output_count):
+            value = int.from_bytes(tx_bytes[pos:pos+8], 'little')
+            pos += 8
+
+            script_length, pos = self._read_varint(tx_bytes, pos)
+            script_pubkey = tx_bytes[pos:pos+script_length]
+            pos += script_length
+
+            outputs.append({
+                'value': value,
+                'script_pubkey': script_pubkey
+            })
+
+        if is_segwit:
+            for input_data in inputs:
+                item_count, pos = self._read_varint(tx_bytes, pos)
+                witness_items = []
+                for _ in range(item_count):
+                    item_length, pos = self._read_varint(tx_bytes, pos)
+                    item = tx_bytes[pos:pos+item_length]
+                    pos += item_length
+                    witness_items.append(item)
+                input_data['witness'] = witness_items
+
+        lock_time = int.from_bytes(tx_bytes[pos:pos+4], 'little') if pos + 4 <= len(tx_bytes) else 0
+
+        return {
+            'version': version,
+            'inputs': inputs,
+            'outputs': outputs,
+            'lock_time': lock_time,
+            'is_segwit': is_segwit
+        }
+
+    def _parse_script_pushes(self, script: bytes) -> List[bytes]:
+        """Extract pushed data elements from a script"""
+        pushes: List[bytes] = []
+        pos = 0
+        while pos < len(script):
+            opcode = script[pos]
+            pos += 1
+
+            if opcode == 0:
+                pushes.append(b"")
+                continue
+
+            if opcode <= 75:
+                length = opcode
+            elif opcode == 0x4c and pos < len(script):
+                length = script[pos]
+                pos += 1
+            elif opcode == 0x4d and pos + 1 < len(script):
+                length = int.from_bytes(script[pos:pos+2], 'little')
+                pos += 2
+            elif opcode == 0x4e and pos + 3 < len(script):
+                length = int.from_bytes(script[pos:pos+4], 'little')
+                pos += 4
+            else:
+                # Not a push opcode; skip
+                continue
+
+            data = script[pos:pos+length]
+            pos += length
+            pushes.append(data)
+
+        return pushes
+
+    def _get_prevout_data(self, prev_txid: str, vout: int) -> Optional[Dict[str, Any]]:
+        """Return cached information about a previous output, fetching it if needed"""
+        cached = self.transaction_cache.get(prev_txid)
+        if cached and 'outputs' in cached and vout < len(cached['outputs']):
+            return cached['outputs'][vout]
+
+        raw_prev_tx = self._fetch_raw_transaction(prev_txid)
+        if not raw_prev_tx:
+            return None
+
+        decoded = self._decode_raw_transaction(raw_prev_tx)
+        outputs = decoded.get('outputs', [])
+        self.transaction_cache[prev_txid] = {'outputs': outputs}
+
+        if vout < len(outputs):
+            return outputs[vout]
+        return None
+
+    def _determine_sighash_type(self, input_data: Dict[str, Any]) -> int:
+        """Infer the sighash type from scriptSig or witness data"""
+        for push in self._parse_script_pushes(input_data.get('script_sig', b'')):
+            if push and push[0] == 0x30:
+                return push[-1]
+
+        for item in input_data.get('witness', []):
+            if item and item[0] == 0x30:
+                return item[-1]
+
+        return 0x01  # Default to SIGHASH_ALL
+
+    def _derive_script_code(self, input_data: Dict[str, Any], prev_script: bytes) -> bytes:
+        """Determine the scriptCode to use for signature hashing"""
+        script_sig = input_data.get('script_sig', b'')
+        witness = input_data.get('witness', [])
+
+        # Native P2WPKH
+        if prev_script.startswith(b"\x00\x14") and len(prev_script) == 22:
+            return b"\x76\xa9\x14" + prev_script[2:] + b"\x88\xac"
+
+        # Native P2WSH
+        if prev_script.startswith(b"\x00\x20") and len(prev_script) == 34 and witness:
+            return witness[-1]
+
+        # P2SH redeem script scenarios
+        if prev_script.startswith(b"\xa9") and prev_script.endswith(b"\x87") and len(prev_script) == 23:
+            pushes = self._parse_script_pushes(script_sig)
+            if pushes:
+                redeem_script = pushes[-1]
+                if redeem_script.startswith(b"\x00\x14") and len(redeem_script) == 22:
+                    return b"\x76\xa9\x14" + redeem_script[2:] + b"\x88\xac"
+                if redeem_script.startswith(b"\x00\x20") and witness:
+                    return witness[-1]
+                return redeem_script
+
+        return prev_script
+
     def _parse_transaction_input(self, tx_bytes: bytes, pos: int) -> Tuple[Optional[Dict], int]:
         """Parse a single transaction input"""
         try:
@@ -984,33 +1161,139 @@ class BitcoinBlockAnalyzer:
             return None
 
     def _calculate_sighash(self, raw_tx_hex: str, input_index: int) -> int:
-        """Calculate Bitcoin SIGHASH_ALL for signature verification"""
+        """Calculate the Bitcoin signature hash for a specific input"""
         try:
-            # Implement proper Bitcoin SIGHASH_ALL calculation
-            tx_bytes = bytes.fromhex(raw_tx_hex)
+            decoded_tx = self._decode_raw_transaction(raw_tx_hex)
+            inputs = decoded_tx['inputs']
+            outputs = decoded_tx['outputs']
 
-            # Create modified transaction for SIGHASH_ALL
-            # This is a simplified version - in production use full BIP-143/BIP-341
+            if input_index >= len(inputs):
+                raise ValueError("Input index out of range")
 
-            # For SIGHASH_ALL:
-            # 1. Replace all scriptSigs with empty scripts except current input
-            # 2. Current input's scriptSig is replaced with the previous output's scriptPubKey
-            # 3. Append SIGHASH_ALL flag (0x01000000)
+            target_input = inputs[input_index]
+            sighash_type = self._determine_sighash_type(target_input)
 
-            # Simplified approach: hash transaction with input index and SIGHASH flag            sighash_data = tx_bytes + input_index.to_bytes(4, 'little') + b'\x01\x00\x00\x00'
+            prev_txid = target_input['prev_hash'][::-1].hex()
+            prev_vout = target_input['prev_index']
+            prevout_data = self._get_prevout_data(prev_txid, prev_vout)
+            if not prevout_data:
+                raise ValueError("Previous output data unavailable for sighash calculation")
 
-            # Double SHA256 (standard Bitcoin hash)
-            hash_result = hashlib.sha256(hashlib.sha256(sighash_data).digest()).digest()
+            script_code = self._derive_script_code(target_input, prevout_data['script_pubkey'])
+            amount = prevout_data.get('value', 0)
 
-            # Convert to integer and reduce modulo N
-            return int.from_bytes(hash_result, 'big') % self.N
+            anyone_can_pay = (sighash_type & 0x80) != 0
+            base_type = sighash_type & 0x1f
+
+            use_bip143 = bool(target_input.get('witness')) or prevout_data['script_pubkey'].startswith(b"\x00")
+
+            if use_bip143:
+                if base_type == 0x03 and input_index >= len(outputs):
+                    return 1
+
+                hash_prevouts = b"\x00" * 32
+                hash_sequence = b"\x00" * 32
+                hash_outputs = b"\x00" * 32
+
+                if not anyone_can_pay:
+                    data = b"".join(inp['prev_hash'] + inp['prev_index'].to_bytes(4, 'little') for inp in inputs)
+                    hash_prevouts = self._double_sha256(data)
+
+                if not anyone_can_pay and base_type not in (0x02, 0x03):
+                    data = b"".join(inp['sequence'].to_bytes(4, 'little') for inp in inputs)
+                    hash_sequence = self._double_sha256(data)
+
+                if base_type not in (0x02, 0x03):
+                    data = b"".join(
+                        out['value'].to_bytes(8, 'little') +
+                        self._encode_varint(len(out['script_pubkey'])) +
+                        out['script_pubkey']
+                        for out in outputs
+                    )
+                    hash_outputs = self._double_sha256(data)
+                elif base_type == 0x03 and input_index < len(outputs):
+                    out = outputs[input_index]
+                    data = (
+                        out['value'].to_bytes(8, 'little') +
+                        self._encode_varint(len(out['script_pubkey'])) +
+                        out['script_pubkey']
+                    )
+                    hash_outputs = self._double_sha256(data)
+
+                preimage = (
+                    decoded_tx['version'].to_bytes(4, 'little') +
+                    hash_prevouts +
+                    hash_sequence +
+                    target_input['prev_hash'] +
+                    target_input['prev_index'].to_bytes(4, 'little') +
+                    self._encode_varint(len(script_code)) +
+                    script_code +
+                    amount.to_bytes(8, 'little') +
+                    target_input['sequence'].to_bytes(4, 'little') +
+                    hash_outputs +
+                    decoded_tx['lock_time'].to_bytes(4, 'little') +
+                    sighash_type.to_bytes(4, 'little')
+                )
+
+                return int.from_bytes(self._double_sha256(preimage), 'big') % self.N
+
+            if base_type == 0x03 and input_index >= len(outputs):
+                return 1
+
+            serialization = decoded_tx['version'].to_bytes(4, 'little')
+
+            if anyone_can_pay:
+                inputs_to_include = [input_index]
+            else:
+                inputs_to_include = list(range(len(inputs)))
+
+            serialization += self._encode_varint(len(inputs_to_include))
+
+            for idx in inputs_to_include:
+                inp = inputs[idx]
+                script = script_code if idx == input_index else b""
+
+                sequence = inp['sequence']
+                if idx != input_index and base_type in (0x02, 0x03):
+                    sequence = 0
+
+                serialization += inp['prev_hash']
+                serialization += inp['prev_index'].to_bytes(4, 'little')
+                serialization += self._encode_varint(len(script))
+                serialization += script
+                serialization += sequence.to_bytes(4, 'little')
+
+            if base_type == 0x02:
+                serialization += self._encode_varint(0)
+            elif base_type == 0x03:
+                serialization += self._encode_varint(input_index + 1)
+                for out_idx in range(input_index + 1):
+                    if out_idx == input_index and out_idx < len(outputs):
+                        out = outputs[out_idx]
+                        value = out['value']
+                        script = out['script_pubkey']
+                    else:
+                        value = 0xffffffffffffffff
+                        script = b""
+                    serialization += value.to_bytes(8, 'little')
+                    serialization += self._encode_varint(len(script))
+                    serialization += script
+            else:
+                serialization += self._encode_varint(len(outputs))
+                for out in outputs:
+                    serialization += out['value'].to_bytes(8, 'little')
+                    serialization += self._encode_varint(len(out['script_pubkey']))
+                    serialization += out['script_pubkey']
+
+            serialization += decoded_tx['lock_time'].to_bytes(4, 'little')
+            serialization += sighash_type.to_bytes(4, 'little')
+
+            return int.from_bytes(self._double_sha256(serialization), 'big') % self.N
 
         except Exception as e:
             logging.error(f"Error calculating sighash: {e}")
-            # Fallback to simpler hash
             fallback_data = f"{raw_tx_hex}{input_index:08x}".encode()
-            hash_result = hashlib.sha256(fallback_data).digest()
-            return int.from_bytes(hash_result, 'big') % self.N
+            return int.from_bytes(hashlib.sha256(fallback_data).digest(), 'big') % self.N
 
     def _extract_signatures_from_scriptsig_fallback(self, tx: Dict) -> List[Dict]:
         """Fallback method using original scriptsig parsing"""
