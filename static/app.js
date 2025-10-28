@@ -427,10 +427,14 @@ function testManualRecovery() {
         .then(data => {
             console.log('Manual recovery result:', data);
             loadingMsg.remove();
-            
-            if (data.success) {
+
+            const hasSuccessfulAttempt = Boolean(data?.successful_recovery);
+
+            if (hasSuccessfulAttempt) {
                 showRecoveryModal(data, true);
                 showCopyFeedback('🔓 PRIVATE KEY RECOVERED! Check modal for details.');
+            } else if (data.success) {
+                showRecoveryModal(data, false);
             } else {
                 showRecoveryModal(data, false);
             }
@@ -455,60 +459,91 @@ function showRecoveryModal(data, isSuccess) {
     
     const title = isSuccess ? '🔓 PRIVATE KEY RECOVERED! 🔓' : '❌ Recovery Failed';
     const modalClass = isSuccess ? 'border-success' : 'border-danger';
-    
+
     let content = '';
     if (isSuccess) {
+        const successData = data?.successful_recovery || {};
+        const privateKeyWif = successData.private_key_wif || 'Unavailable';
+        const privateKeyHex = successData.private_key_hex || successData.validation_result?.private_key_hex || 'Unavailable';
+        const attackMethod = successData.attack_method || 'ECDSA nonce reuse';
+        const recoveryPair = successData.recovery_pair?.transactions || successData.transaction_ids || [];
+        const recoveryPairLabel = recoveryPair.length ? recoveryPair.join(' ↔ ') : 'Unknown pair';
+        const kValue = successData.k_value || 'Unknown';
+        const transactionIds = successData.transaction_ids || data?.test_data?.transaction_ids || [];
+        const primaryTxId = successData.primary_transaction_id || transactionIds[0] || null;
+        const hasValidPrimaryTx = typeof primaryTxId === 'string' && primaryTxId.length === 64;
+        const blockHash = successData.block_hash || data?.test_data?.block_hash || 'Unknown';
+        const blockHeight = successData.block_height || data?.test_data?.block_height || 'Unknown';
+        const rValue = successData.r_value || data?.test_data?.r || 'Unknown';
+        const sValues = successData.s_values || [];
+        const addresses = successData.addresses || {};
+        const addressEntries = Object.entries(addresses);
+        const addressesHtml = addressEntries.length
+            ? addressEntries.map(([type, addr]) => `<div><strong>${type}:</strong> <code>${addr}</code></div>`).join('')
+            : '<em>No derived addresses available.</em>';
+        const copyTarget = privateKeyWif && typeof privateKeyWif === 'string' ? privateKeyWif : '';
+        const copyTargetEscaped = copyTarget.replace(/'/g, "\\'");
+
         content = `
             <div class="mb-3">
                 <strong>Private Key (WIF):</strong><br>
-                <code class="text-break">${data.private_key_wif}</code>
+                <code class="text-break">${privateKeyWif}</code>
             </div>
             <div class="mb-3">
                 <strong>Private Key (HEX):</strong><br>
-                <code class="text-break">${data.private_key_hex}</code>
+                <code class="text-break">${privateKeyHex}</code>
             </div>
             <div class="mb-3">
-                <strong>Recovery Method:</strong> ${data.attack_method}
+                <strong>Recovery Method:</strong> ${attackMethod}
             </div>
             <div class="mb-3">
-                <strong>Recovery Pair:</strong> ${data.recovery_pair}
+                <strong>Recovery Pair:</strong> ${recoveryPairLabel}
             </div>
             <div class="mb-3">
-                <strong>K-value:</strong> ${data.k_value}
+                <strong>K-value:</strong> ${kValue}
             </div>
             <div class="mb-3">
-                <strong>Transaction:</strong> <a href="#" onclick="openTransactionExplorer('${data.transaction_id}'); return false;">${data.transaction_id}</a>
+                <strong>Transaction:</strong> ${hasValidPrimaryTx
+                    ? `<a href="#" onclick="openTransactionExplorer('${primaryTxId}'); return false;">${primaryTxId}</a>`
+                    : '<span>Unavailable</span>'}
             </div>
             <div class="mb-3">
-                <strong>Block:</strong> ${data.block_hash}
+                <strong>Block:</strong> ${blockHash} (Height: ${blockHeight})
             </div>
             <div class="mb-3">
-                <strong>R-value:</strong> ${data.r_value}
+                <strong>R-value:</strong> ${rValue}
             </div>
             <div class="mb-3">
-                <strong>S-values:</strong> ${data.s_values?.join(', ')}
+                <strong>S-values:</strong> ${sValues.length ? sValues.join(', ') : 'Unknown'}
             </div>
             <div class="mb-3">
                 <strong>Addresses Generated:</strong><br>
-                ${Object.entries(data.addresses || {}).map(([type, addr]) => `<div><strong>${type}:</strong> <code>${addr}</code></div>`).join('')}
+                ${addressesHtml}
             </div>
             <div class="alert alert-success">
                 <i class="fas fa-check-circle"></i> This demonstrates successful exploitation of the nonce reuse vulnerability!
             </div>
         `;
     } else {
+        const totalAttempts = data?.attempt_pairs_evaluated || 0;
+        const successfulAttempts = data?.successful_recoveries || 0;
+        const firstTxId = data?.test_data?.transaction_ids?.[0] || data?.transaction_id || null;
+        const hasValidFirstTx = typeof firstTxId === 'string' && firstTxId.length === 64;
+
         content = `
             <div class="mb-3">
-                <strong>Reason:</strong> ${data.message || data.error}
+                <strong>Reason:</strong> ${data.message || data.error || 'No successful recoveries were produced.'}
             </div>
             <div class="mb-3">
-                <strong>Transaction:</strong> <a href="#" onclick="openTransactionExplorer('${data.transaction_id}'); return false;">${data.transaction_id}</a>
+                <strong>Transaction:</strong> ${hasValidFirstTx
+                    ? `<a href="#" onclick="openTransactionExplorer('${firstTxId}'); return false;">${firstTxId}</a>`
+                    : '<span>Unavailable</span>'}
             </div>
             <div class="mb-3">
-                <strong>Attempts:</strong> ${data.attempts_made || 'Unknown'}
+                <strong>Attempted Pairs:</strong> ${totalAttempts}
             </div>
             <div class="mb-3">
-                <strong>Debug:</strong> <code>${data.debug_info || 'No debug info'}</code>
+                <strong>Successful Recoveries:</strong> ${successfulAttempts}
             </div>
             <div class="alert alert-warning">
                 <i class="fas fa-exclamation-triangle"></i> The k-reuse attack was not successful with the current signature data.
@@ -528,7 +563,7 @@ function showRecoveryModal(data, isSuccess) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeRecoveryModal()">Close</button>
-                    ${isSuccess ? `<button type="button" class="btn btn-primary" onclick="copyPrivateKey('${data.private_key_wif}')">Copy Private Key</button>` : ''}
+                    ${isSuccess && copyTarget ? `<button type="button" class="btn btn-primary" onclick="copyPrivateKey('${copyTargetEscaped}')">Copy Private Key</button>` : ''}
                 </div>
             </div>
         </div>
