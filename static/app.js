@@ -461,6 +461,8 @@ function showRecoveryModal(data, isSuccess) {
     const modalClass = isSuccess ? 'border-success' : 'border-danger';
 
     let content = '';
+    let copyTarget = '';
+    let copyTargetEscaped = '';
     if (isSuccess) {
         const successData = data?.successful_recovery || {};
         const privateKeyWif = successData.private_key_wif || 'Unavailable';
@@ -481,8 +483,8 @@ function showRecoveryModal(data, isSuccess) {
         const addressesHtml = addressEntries.length
             ? addressEntries.map(([type, addr]) => `<div><strong>${type}:</strong> <code>${addr}</code></div>`).join('')
             : '<em>No derived addresses available.</em>';
-        const copyTarget = privateKeyWif && typeof privateKeyWif === 'string' ? privateKeyWif : '';
-        const copyTargetEscaped = copyTarget.replace(/'/g, "\\'");
+        copyTarget = privateKeyWif && typeof privateKeyWif === 'string' ? privateKeyWif : '';
+        copyTargetEscaped = copyTarget.replace(/'/g, "\\'");
 
         content = `
             <div class="mb-3">
