@@ -20,7 +20,7 @@ from flask import Flask, render_template, request, jsonify, flash, redirect, url
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 import base58
 from dotenv import load_dotenv
@@ -34,8 +34,6 @@ from config import Config
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-class Base(DeclarativeBase):
-    pass
 db = SQLAlchemy()
 
 # Create Flask app
