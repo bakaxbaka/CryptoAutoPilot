@@ -4,7 +4,6 @@ SQLAlchemy==2.0.21
 requests==2.31.0
 ecdsa==0.18.0
 base58==2.1.1
-hashlib==20081119
 numpy==1.24.3
 scipy==1.11.3
 gunicorn==21.2.0
