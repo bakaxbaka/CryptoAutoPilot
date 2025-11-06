@@ -1,0 +1,69 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting websockets
+  Downloading websockets-15.0.1-cp39-cp39-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.8 kB)
+Collecting python-dotenv
+  Downloading python_dotenv-1.2.1-py3-none-any.whl.metadata (25 kB)
+Collecting psutil
+  Downloading psutil-7.1.3-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (23 kB)
+Collecting pyyaml
+  Downloading pyyaml-6.0.3-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting typing-extensions
+  Downloading typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting asyncio
+  Downloading asyncio-4.0.0-py3-none-any.whl.metadata (994 bytes)
+Collecting aiosqlite
+  Downloading aiosqlite-0.21.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting pydantic
+  Downloading pydantic-2.12.3-py3-none-any.whl.metadata (87 kB)
+Collecting fastapi
+  Downloading fastapi-0.121.0-py3-none-any.whl.metadata (28 kB)
+Collecting uvicorn
+  Downloading uvicorn-0.38.0-py3-none-any.whl.metadata (6.8 kB)
+Collecting annotated-types>=0.6.0 (from pydantic)
+  Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.41.4 (from pydantic)
+  Downloading pydantic_core-2.41.4-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+Collecting typing-inspection>=0.4.2 (from pydantic)
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting starlette<0.50.0,>=0.40.0 (from fastapi)
+  Downloading starlette-0.49.3-py3-none-any.whl.metadata (6.4 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi)
+  Downloading annotated_doc-0.0.3-py3-none-any.whl.metadata (6.6 kB)
+Collecting anyio<5,>=3.6.2 (from starlette<0.50.0,>=0.40.0->fastapi)
+  Downloading anyio-4.11.0-py3-none-any.whl.metadata (4.1 kB)
+Collecting exceptiongroup>=1.0.2 (from anyio<5,>=3.6.2->starlette<0.50.0,>=0.40.0->fastapi)
+  Downloading exceptiongroup-1.3.0-py3-none-any.whl.metadata (6.7 kB)
+Collecting idna>=2.8 (from anyio<5,>=3.6.2->starlette<0.50.0,>=0.40.0->fastapi)
+  Downloading idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+Collecting sniffio>=1.1 (from anyio<5,>=3.6.2->starlette<0.50.0,>=0.40.0->fastapi)
+  Downloading sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting click>=7.0 (from uvicorn)
+  Downloading click-8.1.8-py3-none-any.whl.metadata (2.3 kB)
+Collecting h11>=0.8 (from uvicorn)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Downloading websockets-15.0.1-cp39-cp39-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (181 kB)
+Downloading python_dotenv-1.2.1-py3-none-any.whl (21 kB)
+Downloading psutil-7.1.3-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (263 kB)
+Downloading pyyaml-6.0.3-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (750 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 750.8/750.8 kB 210.2 MB/s  0:00:00
+Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Downloading asyncio-4.0.0-py3-none-any.whl (5.6 kB)
+Downloading aiosqlite-0.21.0-py3-none-any.whl (15 kB)
+Downloading pydantic-2.12.3-py3-none-any.whl (462 kB)
+Downloading pydantic_core-2.41.4-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 293.7 MB/s  0:00:00
+Downloading fastapi-0.121.0-py3-none-any.whl (109 kB)
+Downloading starlette-0.49.3-py3-none-any.whl (74 kB)
+Downloading anyio-4.11.0-py3-none-any.whl (109 kB)
+Downloading uvicorn-0.38.0-py3-none-any.whl (68 kB)
+Downloading annotated_doc-0.0.3-py3-none-any.whl (5.5 kB)
+Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading click-8.1.8-py3-none-any.whl (98 kB)
+Downloading exceptiongroup-1.3.0-py3-none-any.whl (16 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading idna-3.11-py3-none-any.whl (71 kB)
+Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Installing collected packages: websockets, typing-extensions, sniffio, pyyaml, python-dotenv, psutil, idna, h11, click, asyncio, annotated-types, annotated-doc, uvicorn, typing-inspection, pydantic-core, exceptiongroup, aiosqlite, pydantic, anyio, starlette, fastapi
+
+Successfully installed aiosqlite-0.21.0 annotated-doc-0.0.3 annotated-types-0.7.0 anyio-4.11.0 asyncio-4.0.0 click-8.1.8 exceptiongroup-1.3.0 fastapi-0.121.0 h11-0.16.0 idna-3.11 psutil-7.1.3 pydantic-2.12.3 pydantic-core-2.41.4 python-dotenv-1.2.1 pyyaml-6.0.3 sniffio-1.3.1 starlette-0.49.3 typing-extensions-4.15.0 typing-inspection-0.4.2 uvicorn-0.38.0 websockets-15.0.1

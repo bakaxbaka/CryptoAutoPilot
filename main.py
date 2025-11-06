@@ -2051,110 +2051,111 @@ def dashboard_stats():
         'autopilot_status': autopilot_state
     })
 
-    def _fetch_test_transaction_data(self) -> Dict[str, Any]:
-        """Fetch real transaction data with potential k-reuse vulnerability"""
-        try:
-            import requests
-            import hashlib
-            
-            # Search recent blocks for transactions with potential k-reuse
-            # Start with a recent block that's likely to have good test data
-            recent_blocks = [800000, 799999, 799998, 799997, 799996]
-            
-            for block_height in recent_blocks:
-                try:
-                    # Fetch block data
-                    block_url = f"{self.BLOCKSTREAM_API}/block/{block_height}"
-                    response = requests.get(block_url, timeout=10)
-                    if response.status_code != 200:
-                        continue
-                        
-                    block_data = response.json()
-                    transactions = block_data.get('tx', [])[:50]  # Limit to first 50 transactions
+# Helper methods for BitcoinBlockAnalyzer class - moved outside route
+def _fetch_test_transaction_data_helper(analyzer) -> Dict[str, Any]:
+    """Fetch real transaction data with potential k-reuse vulnerability"""
+    try:
+        import requests
+        import hashlib
+        
+        # Search recent blocks for transactions with potential k-reuse
+        # Start with a recent block that's likely to have good test data
+        recent_blocks = [800000, 799999, 799998, 799997, 799996]
+        
+        for block_height in recent_blocks:
+            try:
+                # Fetch block data
+                block_url = f"{analyzer.BLOCKSTREAM_API}/block/{block_height}"
+                response = requests.get(block_url, timeout=10)
+                if response.status_code != 200:
+                    continue
                     
-                    # Track R values to find potential k-reuse
-                    r_value_map = {}
-                    
-                    for txid in transactions:
-                        try:
-                            # Fetch transaction data
-                            tx_url = f"{self.BLOCKSTREAM_API}/tx/{txid}"
-                            tx_response = requests.get(tx_url, timeout=5)
-                            if tx_response.status_code != 200:
-                                continue
-                                
-                            tx_data = tx_response.json()
-                            
-                            # Extract signatures from inputs
-                            for vin in tx_data.get('vin', []):
-                                if 'scriptsig' in vin and vin['scriptsig']:
-                                    scriptsig = vin['scriptsig']
-                                    
-                                    # Extract signature from scriptsig
-                                    signature_data = self._extract_signature_from_scriptsig(scriptsig)
-                                    if signature_data:
-                                        r_hex = signature_data['r']
-                                        
-                                        # Calculate message hash (simplified)
-                                        tx_for_hash = self._build_tx_for_hash(tx_data, vin)
-                                        z = int(hashlib.sha256(hashlib.sha256(tx_for_hash.encode()).digest()).hexdigest(), 16) % self.N
-                                        
-                                        if r_hex in r_value_map:
-                                            # Found potential k-reuse!
-                                            existing_sig = r_value_map[r_hex]
-                                            return {
-                                                'r': int(r_hex, 16),
-                                                'signatures': [
-                                                    {
-                                                        's': existing_sig['s'],
-                                                        'z': existing_sig['z'],
-                                                        'txid': existing_sig['txid']
-                                                    },
-                                                    {
-                                                        's': signature_data['s'],
-                                                        'z': z,
-                                                        'txid': txid
-                                                    }
-                                                ],
-                                                'block_height': block_height,
-                                                'block_hash': block_data.get('id')
-                                            }
-                                        else:
-                                            r_value_map[r_hex] = {
-                                                's': signature_data['s'],
-                                                'z': z,
-                                                'txid': txid
-                                            }
-                        except Exception as tx_error:
-                            logging.debug(f"Error processing transaction {txid}: {tx_error}")
+                block_data = response.json()
+                transactions = block_data.get('tx', [])[:50]  # Limit to first 50 transactions
+                
+                # Track R values to find potential k-reuse
+                r_value_map = {}
+                
+                for txid in transactions:
+                    try:
+                        # Fetch transaction data
+                        tx_url = f"{analyzer.BLOCKSTREAM_API}/tx/{txid}"
+                        tx_response = requests.get(tx_url, timeout=5)
+                        if tx_response.status_code != 200:
                             continue
                             
-                except Exception as block_error:
-                    logging.debug(f"Error processing block {block_height}: {block_error}")
-                    continue
-            
-            # If no real k-reuse found, return None
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error fetching test transaction data: {e}")
-            return None
-    
-    def _build_tx_for_hash(self, tx_data: Dict, vin: Dict) -> str:
-        """Build transaction string for SIGHASH calculation (simplified)"""
-        try:
-            # This is a simplified version - in production, implement proper Bitcoin transaction hashing
-            tx_parts = [
-                str(tx_data.get('version', 1)),
-                str(len(tx_data.get('vin', []))),
-                vin.get('txid', ''),
-                str(vin.get('vout', 0)),
-                str(len(tx_data.get('vout', [])))
-            ]
-            return '|'.join(tx_parts)
-        except Exception as e:
-            logging.error(f"Error building transaction for hash: {e}")
-            return ''
+                        tx_data = tx_response.json()
+                        
+                        # Extract signatures from inputs
+                        for vin in tx_data.get('vin', []):
+                            if 'scriptsig' in vin and vin['scriptsig']:
+                                scriptsig = vin['scriptsig']
+                                
+                                # Extract signature from scriptsig
+                                signature_data = analyzer._extract_signature_from_scriptsig(scriptsig)
+                                if signature_data:
+                                    r_hex = signature_data['r']
+                                    
+                                    # Calculate message hash (simplified)
+                                    tx_for_hash = _build_tx_for_hash_helper(tx_data, vin)
+                                    z = int(hashlib.sha256(hashlib.sha256(tx_for_hash.encode()).digest()).hexdigest(), 16) % analyzer.N
+                                    
+                                    if r_hex in r_value_map:
+                                        # Found potential k-reuse!
+                                        existing_sig = r_value_map[r_hex]
+                                        return {
+                                            'r': int(r_hex, 16),
+                                            'signatures': [
+                                                {
+                                                    's': existing_sig['s'],
+                                                    'z': existing_sig['z'],
+                                                    'txid': existing_sig['txid']
+                                                },
+                                                {
+                                                    's': signature_data['s'],
+                                                    'z': z,
+                                                    'txid': txid
+                                                }
+                                            ],
+                                            'block_height': block_height,
+                                            'block_hash': block_data.get('id')
+                                        }
+                                    else:
+                                        r_value_map[r_hex] = {
+                                            's': signature_data['s'],
+                                            'z': z,
+                                            'txid': txid
+                                        }
+                    except Exception as tx_error:
+                        logging.debug(f"Error processing transaction {txid}: {tx_error}")
+                        continue
+                        
+            except Exception as block_error:
+                logging.debug(f"Error processing block {block_height}: {block_error}")
+                continue
+        
+        # If no real k-reuse found, return None
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error fetching test transaction data: {e}")
+        return None
+
+def _build_tx_for_hash_helper(tx_data: Dict, vin: Dict) -> str:
+    """Build transaction string for SIGHASH calculation (simplified)"""
+    try:
+        # This is a simplified version - in production, implement proper Bitcoin transaction hashing
+        tx_parts = [
+            str(tx_data.get('version', 1)),
+            str(len(tx_data.get('vin', []))),
+            vin.get('txid', ''),
+            str(vin.get('vout', 0)),
+            str(len(tx_data.get('vout', [])))
+        ]
+        return '|'.join(tx_parts)
+    except Exception as e:
+        logging.error(f"Error building transaction for hash: {e}")
+        return ''
 
 @app.route('/test_manual_recovery')
 def test_manual_recovery():
@@ -2163,7 +2164,7 @@ def test_manual_recovery():
         analyzer = BitcoinBlockAnalyzer()
         
         # Fetch real transaction data with potential k-reuse vulnerability
-        test_data = analyzer._fetch_test_transaction_data()
+        test_data = _fetch_test_transaction_data_helper(analyzer)
         
         if not test_data:
             return jsonify({
