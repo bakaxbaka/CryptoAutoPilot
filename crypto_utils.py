@@ -6,12 +6,15 @@ Uses well-tested libraries for ECC operations and key conversions
 
 import hashlib
 import logging
+import math
+import time
 from typing import Optional, Tuple, Dict, Any
 from dataclasses import dataclass
 
 try:
     from ecdsa import SECP256k1, SigningKey, VerifyingKey
-    from ecdsa.util import sigencode_der, sigdecode_der
+    from ecdsa import ellipticcurve, numbertheory
+    from ecdsa.util import sigdecode_der
     ECDSA_AVAILABLE = True
 except ImportError:
     ECDSA_AVAILABLE = False
@@ -19,8 +22,6 @@ except ImportError:
 
 try:
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
@@ -73,10 +74,10 @@ class SecureCryptoUtils:
         self.attack_id = attack_id
         self.logger.info(f"Attack ID set: {attack_id}")
     
-    def private_key_to_public_key(self, private_key: int) -> Optional[str]:
+    def private_key_to_public_key(self, private_key: int, compressed: bool = True) -> Optional[str]:
         """
         Convert private key to public key using ecdsa library
-        Returns compressed public key in hex format
+        Returns public key in hex format using the requested SEC1 encoding
         """
         try:
             if not ECDSA_AVAILABLE:
@@ -91,8 +92,9 @@ class SecureCryptoUtils:
             # Get verifying key (public key)
             verifying_key = signing_key.get_verifying_key()
             
-            # Get compressed public key bytes
-            public_key_bytes = verifying_key.to_string("compressed")
+            # Get public key bytes in the requested format
+            encoding = "compressed" if compressed else "uncompressed"
+            public_key_bytes = verifying_key.to_string(encoding)
             
             # Convert to hex
             public_key_hex = public_key_bytes.hex()
@@ -111,25 +113,57 @@ class SecureCryptoUtils:
         try:
             if not ECDSA_AVAILABLE:
                 raise RuntimeError("ecdsa library not available")
-            
+
             # Convert hex to bytes
             public_key_bytes = bytes.fromhex(public_key_hex)
-            
-            # Create verifying key
-            verifying_key = VerifyingKey.from_string(public_key_bytes, curve=SECP256k1)
-            
-            # Get uncompressed coordinates
-            uncompressed_bytes = verifying_key.to_string("uncompressed")
-            
-            # Extract x and y coordinates (skip first byte for uncompressed format)
-            x = int.from_bytes(uncompressed_bytes[1:33], byteorder='big')
-            y = int.from_bytes(uncompressed_bytes[33:65], byteorder='big')
-            
-            return (x, y)
-            
+
+            verifying_key = self._verifying_key_from_bytes(public_key_bytes)
+
+            point = verifying_key.pubkey.point
+
+            return (point.x(), point.y())
+
         except Exception as e:
             self.logger.error(f"Error converting public key to coordinates: {e}")
             return None
+
+    def _decode_public_key_bytes(self, public_key_bytes: bytes) -> Tuple[int, int]:
+        """Decode raw, compressed or uncompressed public key bytes into coordinates."""
+        length = len(public_key_bytes)
+
+        if length == 33:
+            return self._decode_compressed_key(public_key_bytes)
+        if length == 65:
+            if public_key_bytes[0] != 0x04:
+                raise ValueError("Invalid uncompressed public key prefix")
+            x = int.from_bytes(public_key_bytes[1:33], "big")
+            y = int.from_bytes(public_key_bytes[33:], "big")
+            return x, y
+        if length == 64:
+            x = int.from_bytes(public_key_bytes[:32], "big")
+            y = int.from_bytes(public_key_bytes[32:], "big")
+            return x, y
+
+        raise ValueError(f"Unsupported public key length: {length}")
+
+    def _decode_compressed_key(self, public_key_bytes: bytes) -> Tuple[int, int]:
+        """Decode a compressed SEC1 public key into affine coordinates."""
+        prefix = public_key_bytes[0]
+        if prefix not in (0x02, 0x03):
+            raise ValueError("Invalid compressed public key prefix")
+
+        x = int.from_bytes(public_key_bytes[1:], "big")
+        curve = SECP256k1.curve
+        p = curve.p()
+
+        # y^2 = x^3 + ax + b (mod p)
+        alpha = (pow(x, 3, p) + curve.a() * x + curve.b()) % p
+        beta = numbertheory.square_root_mod_prime(alpha, p)
+
+        if (beta % 2) != (prefix % 2):
+            beta = (-beta) % p
+
+        return x, beta
     
     def private_key_to_wif(self, private_key: int, compressed: bool = True) -> Optional[str]:
         """
@@ -205,12 +239,11 @@ class SecureCryptoUtils:
             private_key = self.wif_to_private_key(wif_key)
             if private_key is None:
                 return None
-            
-            # Determine if key is compressed
+
             decoded = base58.b58decode(wif_key) if BASE58_AVAILABLE else self._base58_decode_fallback(wif_key)
             compressed = len(decoded) == 38
-            
-            return self.private_key_to_public_key(private_key)
+
+            return self.private_key_to_public_key(private_key, compressed=compressed)
             
         except Exception as e:
             self.logger.error(f"Error converting WIF to public key: {e}")
@@ -222,14 +255,12 @@ class SecureCryptoUtils:
         Returns (r, s) tuple
         """
         try:
-            if not CRYPTOGRAPHY_AVAILABLE:
-                raise RuntimeError("cryptography library not available")
-            
-            # Convert hex to bytes
             signature_bytes = bytes.fromhex(signature_der)
-            
-            # Decode DER signature
-            r, s = decode_dss_signature(signature_bytes)
+
+            if CRYPTOGRAPHY_AVAILABLE:
+                r, s = decode_dss_signature(signature_bytes)
+            else:
+                r, s = sigdecode_der(signature_bytes, SECP256k1.order)
             
             self.logger.debug(f"Parsed DER signature: r={r}, s={s}")
             return (r, s)
@@ -246,22 +277,12 @@ class SecureCryptoUtils:
             if not ECDSA_AVAILABLE:
                 raise RuntimeError("ecdsa library not available")
             
-            # Get public key bytes
             public_key_bytes = bytes.fromhex(public_key_hex)
-            
-            # Create verifying key
-            verifying_key = VerifyingKey.from_string(public_key_bytes, curve=SECP256k1)
-            
-            # Parse signature
-            r, s = self.parse_signature_der(signature_der)
-            if r is None or s is None:
-                return False
-            
-            # Create signature in ecdsa format
-            signature_bytes = sigencode_der(r, s, SECP256k1.order)
-            
-            # Verify signature
-            is_valid = verifying_key.verify(signature_bytes, message_hash)
+            verifying_key = self._verifying_key_from_bytes(public_key_bytes)
+
+            signature_bytes = bytes.fromhex(signature_der)
+
+            is_valid = verifying_key.verify_digest(signature_bytes, message_hash, sigdecode=sigdecode_der)
             
             self.logger.debug(f"Signature verification result: {is_valid}")
             return is_valid
@@ -310,16 +331,13 @@ class SecureCryptoUtils:
             if not ECDSA_AVAILABLE:
                 raise RuntimeError("ecdsa library not available")
             
-            # Check length
-            if len(public_key_hex) not in [66, 130]:  # Compressed/uncompressed
+            if len(public_key_hex) not in [64, 66, 128, 130]:  # Raw/compressed/uncompressed
                 return False
-            
-            # Convert to bytes
+
             public_key_bytes = bytes.fromhex(public_key_hex)
-            
-            # Try to create verifying key (this validates curve membership)
-            verifying_key = VerifyingKey.from_string(public_key_bytes, curve=SECP256k1)
-            
+
+            self._verifying_key_from_bytes(public_key_bytes)
+
             return True
             
         except Exception as e:
@@ -512,6 +530,12 @@ class SecureCryptoUtils:
                 'cryptography': CRYPTOGRAPHY_AVAILABLE,
                 'base58': BASE58_AVAILABLE
             },
-            'timestamp': logging.time.time(),
+            'timestamp': time.time(),
             'logger_name': self.logger.name
         }
+    def _verifying_key_from_bytes(self, public_key_bytes: bytes) -> VerifyingKey:
+        """Construct a verifying key from raw, compressed, or uncompressed bytes."""
+        x, y = self._decode_public_key_bytes(public_key_bytes)
+        point = ellipticcurve.Point(SECP256k1.curve, x, y)
+        return VerifyingKey.from_public_point(point, curve=SECP256k1)
+
